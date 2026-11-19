@@ -30,6 +30,8 @@ pub fn run() {
             commands::set_settings,
             commands::check_mpv,
             commands::play_in_mpv,
+            commands::get_comments,
+            commands::get_related,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

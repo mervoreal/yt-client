@@ -186,6 +186,36 @@ pub async fn set_settings(state: State<'_, AppState>, api_key: Option<String>, c
 }
 
 #[tauri::command]
+pub async fn get_comments(state: State<'_, AppState>, video_id: String, page_token: Option<String>) -> Result<serde_json::Value> {
+    let yt = state.yt();
+    let resp = yt.comment_threads(&video_id, 20, page_token.as_deref()).await?;
+    let items: Vec<serde_json::Value> = resp.items.into_iter().map(|t| {
+        let c = t.snippet.as_ref().and_then(|s| s.topLevelComment.as_ref()).and_then(|c| c.snippet.clone()).unwrap_or_default();
+        serde_json::json!({
+            "id": t.id,
+            "author": c.authorDisplayName,
+            "avatar": c.authorProfileImageUrl,
+            "text": c.textDisplay,
+            "likes": c.likeCount,
+            "publishedAt": c.publishedAt,
+            "replyCount": t.snippet.as_ref().and_then(|s| s.totalReplyCount),
+        })
+    }).collect();
+    Ok(serde_json::json!({ "items": items, "nextPageToken": resp.nextPageToken }))
+}
+
+#[tauri::command]
+pub async fn get_related(state: State<'_, AppState>, video_id: String) -> Result<serde_json::Value> {
+    let yt = state.yt();
+    let resp = yt.related_videos(&video_id, 12).await.unwrap_or(SearchResponse { kind: None, etag: None, nextPageToken: None, prevPageToken: None, pageInfo: None, items: vec![] });
+    let ids: Vec<String> = resp.items.iter().filter_map(|i| i.id.as_ref()?.videoId.clone()).collect();
+    let details = yt.videos(&ids).await.unwrap_or(VideosResponse { items: vec![] });
+    let map: std::collections::HashMap<String, VideoItem> = details.items.into_iter().map(|v| (v.id.clone(), v)).collect();
+    let items: Vec<VideoView> = ids.iter().filter_map(|id| map.get(id).cloned().map(VideoView::from)).collect();
+    Ok(serde_json::json!({ "items": items }))
+}
+
+#[tauri::command]
 pub async fn check_mpv() -> Result<bool> {
     // check if mpv is on PATH
     let status = std::process::Command::new("mpv").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status();

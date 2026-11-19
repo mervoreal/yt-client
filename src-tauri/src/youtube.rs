@@ -111,6 +111,28 @@ impl YtClient {
         ];
         self.get("activities", &params).await
     }
+
+    pub async fn comment_threads(&self, video_id: &str, max: u32, page_token: Option<&str>) -> Result<CommentThreadsResponse> {
+        let mut params: Vec<(&str, String)> = vec![
+            ("part", "snippet,replies".into()),
+            ("videoId", video_id.into()),
+            ("maxResults", max.to_string()),
+            ("order", "relevance".into()),
+            ("textFormat", "plainText".into()),
+        ];
+        if let Some(pt) = page_token { params.push(("pageToken", pt.into())); }
+        self.get("commentThreads", &params).await
+    }
+
+    pub async fn related_videos(&self, video_id: &str, max: u32) -> Result<SearchResponse> {
+        let params = vec![
+            ("part", "snippet".into()),
+            ("relatedToVideoId", video_id.into()),
+            ("type", "video".into()),
+            ("maxResults", max.to_string()),
+        ];
+        self.get("search", &params).await
+    }
 }
 
 // ---------- typed responses ----------
@@ -209,6 +231,50 @@ pub struct SubscriptionsResponse { pub nextPageToken: Option<String>, pub pageIn
 pub struct ActivityItem { pub kind: Option<String>, pub etag: Option<String>, pub id: String, pub snippet: Option<Snippet>, pub contentDetails: Option<serde_json::Value> }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivitiesResponse { pub nextPageToken: Option<String>, pub pageInfo: Option<PageInfo>, pub items: Vec<ActivityItem> }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CommentSnippet {
+    pub authorDisplayName: Option<String>,
+    pub authorProfileImageUrl: Option<String>,
+    pub authorChannelUrl: Option<String>,
+    pub textDisplay: Option<String>,
+    pub textOriginal: Option<String>,
+    pub likeCount: Option<u32>,
+    pub publishedAt: Option<String>,
+    pub updatedAt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Comment {
+    pub id: Option<String>,
+    pub snippet: Option<CommentSnippet>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CommentThreadSnippet {
+    pub channelId: Option<String>,
+    pub videoId: Option<String>,
+    pub topLevelComment: Option<Comment>,
+    pub canReply: Option<bool>,
+    pub totalReplyCount: Option<u32>,
+    pub isPublic: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommentThread {
+    pub kind: Option<String>,
+    pub etag: Option<String>,
+    pub id: String,
+    pub snippet: Option<CommentThreadSnippet>,
+    pub replies: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommentThreadsResponse {
+    pub nextPageToken: Option<String>,
+    pub pageInfo: Option<PageInfo>,
+    pub items: Vec<CommentThread>,
+}
 
 // helper to extract best thumbnail url
 pub fn best_thumb(t: &Option<Thumbnails>) -> Option<String> {

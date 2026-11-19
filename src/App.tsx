@@ -25,6 +25,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [watchId, setWatchId] = useState<string | null>(null);
   const [watchMeta, setWatchMeta] = useState<Video | null>(null);
+  const [comments, setComments] = useState<any[]>([]);
+  const [related, setRelated] = useState<Video[]>([]);
   const [channelData, setChannelData] = useState<any>(null);
   const [channelVideos, setChannelVideos] = useState<Video[]>([]);
   const [subs, setSubs] = useState<Sub[]>([]);
@@ -63,12 +65,16 @@ export default function App() {
   async function openVideo(id: string) {
     setWatchId(id);
     setView("watch");
+    setComments([]);
+    setRelated([]);
     try {
       const v: any = await invoke("get_video", { id });
       setWatchMeta(v as Video);
     } catch (e) {
       setError(String(e));
     }
+    invoke<any>("get_comments", { videoId: id }).then((r) => setComments(r.items || [])).catch(() => {});
+    invoke<any>("get_related", { videoId: id }).then((r) => setRelated((r.items || []) as Video[])).catch(() => {});
   }
 
   async function openChannel(id: string) {
@@ -216,9 +222,40 @@ export default function App() {
               <p className="channel" onClick={() => watchMeta.channel_id && openChannel(watchMeta.channel_id)}>
                 {watchMeta.channel_title}
               </p>
+              <div className="stats">{watchMeta.view_count} views · {fmtDuration(watchMeta.duration)}</div>
               <p className="desc">{watchMeta.description}</p>
             </div>
           )}
+
+          <div className="watchbody">
+            <div className="comments">
+              <h3>Comments</h3>
+              {comments.length === 0 && <p className="hint">No comments or loading...</p>}
+              {comments.map((c: any) => (
+                <div key={c.id} className="comment">
+                  {c.avatar && <img src={c.avatar} alt="" />}
+                  <div>
+                    <div className="commentauthor">{c.author} <span className="commentdate">{c.publishedAt?.slice(0, 10)}</span></div>
+                    <div className="commenttext">{c.text}</div>
+                    {c.likes ? <div className="commentlikes">👍 {c.likes}</div> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="related">
+              <h3>Related</h3>
+              {related.map((v) => (
+                <div key={v.id} className="relatedcard" onClick={() => openVideo(v.id)}>
+                  {v.thumbnail && <img src={v.thumbnail} alt="" />}
+                  <div>
+                    <div className="cardtitle">{v.title}</div>
+                    <div className="cardmeta">{v.channel_title}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <button onClick={() => setView("search")}>Back</button>
         </div>
       )}

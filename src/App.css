@@ -38,3 +38,16 @@ button {  }
 .hint { font-size: 12px; color: #aaa; }
 .nativebar { padding: 8px 16px; }
 .playnative { padding: 8px 14px; border-radius: 20px; border: none; background: #ff0000; color: #fff; cursor: pointer; font-weight: 600; }
+.stats { color: #aaa; font-size: 13px; margin: 4px 0 8px; }
+.watchbody { display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 0 16px 16px; }
+.comments h3, .related h3 { font-size: 15px; margin: 0 0 8px; }
+.comment { display: flex; gap: 10px; margin-bottom: 12px; }
+.comment img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.commentauthor { font-size: 13px; font-weight: 600; }
+.commentdate { color: #aaa; font-size: 11px; font-weight: 400; margin-left: 6px; }
+.commenttext { font-size: 13px; color: #ddd; white-space: pre-wrap; }
+.commentlikes { font-size: 11px; color: #aaa; margin-top: 4px; }
+.relatedcard { display: flex; gap: 8px; margin-bottom: 10px; cursor: pointer; }
+.relatedcard img { width: 120px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; }
+.relatedcard .cardtitle { font-size: 13px; }
+@media (max-width: 900px) { .watchbody { grid-template-columns: 1fr; } }
