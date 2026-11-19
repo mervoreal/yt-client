@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod state;
 mod youtube;
+mod ytdlp;
 
 use state::AppState;
 use std::sync::Arc;

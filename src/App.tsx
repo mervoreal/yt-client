@@ -84,9 +84,11 @@ export default function App() {
     try {
       const c: any = await invoke("get_channel", { id });
       setChannelData(c);
-      const feed: any = await invoke("get_subscription_feed", { channelId: id }).catch(() => null);
-      // fallback: try uploads via playlist items not exposed; use search by channel
-      if (feed && feed.items) setChannelVideos(feed.items as Video[]);
+      if (c.videos) setChannelVideos(c.videos as Video[]);
+      else {
+        const feed: any = await invoke("get_subscription_feed", { channelId: id }).catch(() => null);
+        if (feed && feed.items) setChannelVideos(feed.items as Video[]);
+      }
     } catch (e) {
       setError(String(e));
     }
@@ -291,6 +293,7 @@ export default function App() {
         <div className="subs">
           <h2>Subscriptions</h2>
           <div className="sublist">
+            {subs.length === 0 && <p className="hint">Subscriptions require a YouTube Data API key (set in Settings). Watching and search work without one.</p>}
             {subs.map((s) => (
               <div key={s.id} className="subitem" onClick={() => s.channelId && openChannel(s.channelId)}>
                 {s.thumbnail && <img src={s.thumbnail} alt="" />}

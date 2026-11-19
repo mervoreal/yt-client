@@ -39,55 +39,38 @@ impl From<VideoItem> for VideoView {
 }
 
 #[tauri::command]
-pub async fn search_videos(state: State<'_, AppState>, query: String, page_token: Option<String>) -> Result<serde_json::Value> {
-    let yt = state.yt();
-    let resp = yt.search(&query, 20, page_token.as_deref()).await?;
-    let ids: Vec<String> = resp.items.iter().filter_map(|i| i.id.as_ref()?.videoId.clone()).collect();
-    let details = yt.videos(&ids).await.unwrap_or(VideosResponse { items: vec![] });
-    let map: std::collections::HashMap<String, VideoItem> = details.items.into_iter().map(|v| (v.id.clone(), v)).collect();
-    let items: Vec<VideoView> = ids.iter().filter_map(|id| {
-        if let Some(v) = map.get(id).cloned() { return Some(VideoView::from(v)); }
-        resp.items.iter().find(|s| s.id.as_ref().and_then(|x| x.videoId.as_ref()) == Some(id)).map(|s| {
-            let sn = s.snippet.clone().unwrap_or_default();
-            VideoView {
-                id: id.clone(),
-                title: sn.title.unwrap_or_default(),
-                channel_id: sn.channelId,
-                channel_title: sn.channelTitle,
-                description: sn.description,
-                thumbnail: best_thumb(&sn.thumbnails),
-                duration: None,
-                published_at: sn.publishedAt,
-                view_count: None,
-            }
-        })
-    }).collect();
-    let next = resp.nextPageToken;
-    Ok(serde_json::json!({ "items": items, "nextPageToken": next }))
+pub async fn search_videos(_state: State<'_, AppState>, query: String, _page_token: Option<String>) -> Result<serde_json::Value> {
+    let items = crate::ytdlp::search(&query, 12).await?;
+    Ok(serde_json::json!({ "items": items, "nextPageToken": null }))
 }
 
 #[tauri::command]
-pub async fn get_video(state: State<'_, AppState>, id: String) -> Result<VideoView> {
-    let yt = state.yt();
-    let resp = yt.videos(&[id.clone()]).await?;
-    let v = resp.items.into_iter().next().ok_or_else(|| crate::error::AppError::NotFound(id))?;
-    Ok(VideoView::from(v))
+pub async fn get_video(_state: State<'_, AppState>, id: String) -> Result<VideoView> {
+    crate::ytdlp::get_video(&id).await
 }
 
 #[tauri::command]
-pub async fn get_channel(state: State<'_, AppState>, id: String) -> Result<serde_json::Value> {
-    let yt = state.yt();
-    let resp = yt.channels(&[id.clone()]).await?;
-    let c = resp.items.into_iter().next().ok_or_else(|| crate::error::AppError::NotFound(id))?;
-    let s = c.snippet.unwrap_or_default();
+pub async fn get_channel(_state: State<'_, AppState>, id: String) -> Result<serde_json::Value> {
+    let url = format!("https://www.youtube.com/channel/{}", id);
+    // fetch first video for channel name/thumb
+    let first = crate::ytdlp::run_raw(&["--dump-json", "--playlist-end", "1", &url]).await.ok();
+    let (title, thumbnail) = if let Some(o) = first {
+        let line = o.lines().next().unwrap_or("");
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            (v.get("channel").or_else(|| v.get("uploader")).and_then(|x| x.as_str()).map(|s| s.to_string()).unwrap_or_else(|| id.clone()),
+             v.get("thumbnail").and_then(|x| x.as_str()).map(|s| s.to_string()))
+        } else { (id.clone(), None) }
+    } else { (id.clone(), None) };
+    let videos = crate::ytdlp::get_channel_videos(&id).await.unwrap_or_default();
     Ok(serde_json::json!({
-        "id": c.id,
-        "title": s.title,
-        "description": s.description,
-        "thumbnail": best_thumb(&s.thumbnails),
-        "subscriberCount": c.statistics.as_ref().and_then(|x| x.subscriberCount.clone()),
-        "videoCount": c.statistics.as_ref().and_then(|x| x.videoCount.clone()),
-        "uploadsPlaylistId": c.contentDetails.as_ref().and_then(|cd| cd.relatedPlaylists.as_ref()).and_then(|r| r.uploads.clone()),
+        "id": id,
+        "title": title,
+        "description": null,
+        "thumbnail": thumbnail,
+        "subscriberCount": null,
+        "videoCount": null,
+        "uploadsPlaylistId": null,
+        "videos": videos,
     }))
 }
 
@@ -108,40 +91,22 @@ pub async fn get_channel_playlists(state: State<'_, AppState>, channel_id: Strin
 }
 
 #[tauri::command]
-pub async fn get_playlist_items(state: State<'_, AppState>, playlist_id: String, page_token: Option<String>) -> Result<serde_json::Value> {
-    let yt = state.yt();
-    let resp = yt.playlist_items(&playlist_id, 25, page_token.as_deref()).await?;
-    let ids: Vec<String> = resp.items.iter().filter_map(|e| e.contentDetails.as_ref()?.videoId.clone().or_else(|| e.snippet.as_ref()?.resourceId.as_ref()?.videoId.clone())).collect();
-    let details = yt.videos(&ids).await.unwrap_or(VideosResponse { items: vec![] });
-    let map: std::collections::HashMap<String, VideoItem> = details.items.into_iter().map(|v| (v.id.clone(), v)).collect();
-    let items: Vec<VideoView> = ids.iter().filter_map(|id| map.get(id).cloned().map(VideoView::from)).collect();
-    Ok(serde_json::json!({ "items": items, "nextPageToken": resp.nextPageToken }))
+pub async fn get_playlist_items(_state: State<'_, AppState>, playlist_id: String, _page_token: Option<String>) -> Result<serde_json::Value> {
+    // Treat playlist_id as a channel id for yt-dlp fallback.
+    let items = crate::ytdlp::get_channel_videos(&playlist_id).await.unwrap_or_default();
+    Ok(serde_json::json!({ "items": items, "nextPageToken": null }))
 }
 
 #[tauri::command]
-pub async fn get_subscriptions(state: State<'_, AppState>, page_token: Option<String>) -> Result<serde_json::Value> {
-    let yt = state.yt();
-    let resp = yt.subscriptions(25, page_token.as_deref()).await?;
-    let items: Vec<serde_json::Value> = resp.items.into_iter().map(|s| {
-        let sn = s.snippet.unwrap_or_default();
-        let rid = sn.resourceId.clone().unwrap_or_default();
-        serde_json::json!({
-            "id": s.id,
-            "title": sn.title,
-            "thumbnail": best_thumb(&sn.thumbnails),
-            "channelId": rid.channelId,
-        })
-    }).collect();
-    Ok(serde_json::json!({ "items": items, "nextPageToken": resp.nextPageToken }))
+pub async fn get_subscriptions(_state: State<'_, AppState>, _page_token: Option<String>) -> Result<serde_json::Value> {
+    // Subscriptions require a YouTube Data API key + OAuth. Without an API key, return empty.
+    Ok(serde_json::json!({ "items": [], "nextPageToken": null, "requires_api_key": true }))
 }
 
 #[tauri::command]
-pub async fn get_subscription_feed(state: State<'_, AppState>, channel_id: String) -> Result<serde_json::Value> {
-    let yt = state.yt();
-    let ch = yt.channels(&[channel_id.clone()]).await?;
-    let c = ch.items.into_iter().next().ok_or_else(|| crate::error::AppError::NotFound(channel_id.clone()))?;
-    let uploads = c.contentDetails.as_ref().and_then(|cd| cd.relatedPlaylists.as_ref()).and_then(|r| r.uploads.clone()).ok_or_else(|| crate::error::AppError::NotFound("uploads".into()))?;
-    get_playlist_items(state, uploads, None).await
+pub async fn get_subscription_feed(_state: State<'_, AppState>, channel_id: String) -> Result<serde_json::Value> {
+    let items = crate::ytdlp::get_channel_videos(&channel_id).await.unwrap_or_default();
+    Ok(serde_json::json!({ "items": items, "nextPageToken": null }))
 }
 
 #[tauri::command]
@@ -186,32 +151,17 @@ pub async fn set_settings(state: State<'_, AppState>, api_key: Option<String>, c
 }
 
 #[tauri::command]
-pub async fn get_comments(state: State<'_, AppState>, video_id: String, page_token: Option<String>) -> Result<serde_json::Value> {
-    let yt = state.yt();
-    let resp = yt.comment_threads(&video_id, 20, page_token.as_deref()).await?;
-    let items: Vec<serde_json::Value> = resp.items.into_iter().map(|t| {
-        let c = t.snippet.as_ref().and_then(|s| s.topLevelComment.as_ref()).and_then(|c| c.snippet.clone()).unwrap_or_default();
-        serde_json::json!({
-            "id": t.id,
-            "author": c.authorDisplayName,
-            "avatar": c.authorProfileImageUrl,
-            "text": c.textDisplay,
-            "likes": c.likeCount,
-            "publishedAt": c.publishedAt,
-            "replyCount": t.snippet.as_ref().and_then(|s| s.totalReplyCount),
-        })
-    }).collect();
-    Ok(serde_json::json!({ "items": items, "nextPageToken": resp.nextPageToken }))
+pub async fn get_comments(_state: State<'_, AppState>, video_id: String, _page_token: Option<String>) -> Result<serde_json::Value> {
+    let items = crate::ytdlp::get_comments(&video_id, 20).await?;
+    Ok(serde_json::json!({ "items": items, "nextPageToken": null }))
 }
 
 #[tauri::command]
-pub async fn get_related(state: State<'_, AppState>, video_id: String) -> Result<serde_json::Value> {
-    let yt = state.yt();
-    let resp = yt.related_videos(&video_id, 12).await.unwrap_or(SearchResponse { kind: None, etag: None, nextPageToken: None, prevPageToken: None, pageInfo: None, items: vec![] });
-    let ids: Vec<String> = resp.items.iter().filter_map(|i| i.id.as_ref()?.videoId.clone()).collect();
-    let details = yt.videos(&ids).await.unwrap_or(VideosResponse { items: vec![] });
-    let map: std::collections::HashMap<String, VideoItem> = details.items.into_iter().map(|v| (v.id.clone(), v)).collect();
-    let items: Vec<VideoView> = ids.iter().filter_map(|id| map.get(id).cloned().map(VideoView::from)).collect();
+pub async fn get_related(_state: State<'_, AppState>, video_id: String) -> Result<serde_json::Value> {
+    // need title for related search; fetch video first
+    let v = crate::ytdlp::get_video(&video_id).await.ok();
+    let title = v.map(|x| x.title).unwrap_or_default();
+    let items = crate::ytdlp::get_related(&video_id, &title).await.unwrap_or_default();
     Ok(serde_json::json!({ "items": items }))
 }
 
