@@ -1,5 +1,17 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+
+function Thumb({ url, alt }: { url?: string | null; alt?: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!url) return;
+    let cancelled = false;
+    invoke<string>("get_thumbnail", { url }).then((r) => { if (!cancelled) setSrc(r); }).catch(() => { if (!cancelled) setSrc(url); });
+    return () => { cancelled = true; };
+  }, [url]);
+  return src ? <img src={src} alt={alt || ""} /> : (url ? <img src={url} alt={alt || ""} /> : null);
+}
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 type Video = {
@@ -17,7 +29,7 @@ type Video = {
 type Sub = { id: string; title?: string | null; thumbnail?: string | null; channelId?: string | null };
 
 export default function App() {
-  const [view, setView] = useState<"search" | "watch" | "channel" | "subs">("search");
+  const [view, setView] = useState<"search" | "watch" | "channel" | "subs" | "history">("search");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Video[]>([]);
   const [nextToken, setNextToken] = useState<string | null>(null);
@@ -33,6 +45,8 @@ export default function App() {
   const [authed, setAuthed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [mpvAvailable, setMpvAvailable] = useState(false);
+  const [history, setHistory] = useState<Video[]>([]);
+  const playerRef = useRef<any>(null);
   const [settings, setSettings] = useState({ api_key: "", client_id: "", client_secret: "" });
 
   useEffect(() => {
@@ -43,6 +57,57 @@ export default function App() {
     }).catch(() => {});
     invoke<boolean>("check_mpv").then((r) => setMpvAvailable(!!r)).catch(() => setMpvAvailable(false));
   }, []);
+
+  useEffect(() => {
+    const unlisten = listen("media-key", (e: any) => {
+      const p = playerRef.current;
+      if (!p) return;
+      const key = String(e.payload || "");
+      if (key.includes("MediaPlayPause")) {
+        const st = p.getPlayerState?.();
+        if (st === 1) p.pauseVideo?.(); else p.playVideo?.();
+      }
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, []);
+
+  useEffect(() => {
+    if (view !== "watch") return;
+    const onKey = (e: KeyboardEvent) => {
+      const p = playerRef.current;
+      if (!p) return;
+      if (e.code === "Space" || e.key === "k") { e.preventDefault(); const st = p.getPlayerState?.(); if (st === 1) p.pauseVideo?.(); else p.playVideo?.(); }
+      else if (e.key === "j") { e.preventDefault(); p.seekTo?.(Math.max(0, p.getCurrentTime?.() - 10), true); }
+      else if (e.key === "l") { e.preventDefault(); p.seekTo?.(p.getCurrentTime?.() + 10, true); }
+      else if (e.key === "f") { e.preventDefault(); const el = document.querySelector(".player") as any; if (document.fullscreenElement) document.exitFullscreen(); else el?.requestFullscreen?.(); }
+      else if (e.key === "m") { e.preventDefault(); if (p.isMuted?.()) p.unMute?.(); else p.mute?.(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); p.seekTo?.(Math.max(0, p.getCurrentTime?.() - 5), true); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); p.seekTo?.(p.getCurrentTime?.() + 5, true); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view]);
+
+  useEffect(() => {
+    if (view !== "watch" || !watchId) return;
+    const create = () => {
+      const YT = (window as any).YT;
+      if (!YT || !YT.Player) return false;
+      try {
+        if (playerRef.current) { try { playerRef.current.destroy(); } catch {} }
+        playerRef.current = new YT.Player("yt-player", {
+          videoId: watchId,
+          playerVars: { autoplay: 1, enablejsapi: 1, rel: 0 },
+          events: { onReady: () => {} },
+        });
+        return true;
+      } catch { return false; }
+    };
+    if (!create()) {
+      const t = setInterval(() => { if (create()) clearInterval(t); }, 300);
+      return () => clearInterval(t);
+    }
+  }, [view, watchId]);
 
   async function search(q?: string, token?: string | null) {
     const qq = q ?? query;
@@ -70,6 +135,7 @@ export default function App() {
     try {
       const v: any = await invoke("get_video", { id });
       setWatchMeta(v as Video);
+      invoke("record_watch", { videoId: id, title: v.title, channelTitle: v.channel_title, thumbnail: v.thumbnail, progress: 0 }).catch(() => {});
     } catch (e) {
       setError(String(e));
     }
@@ -92,6 +158,14 @@ export default function App() {
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  async function loadHistory() {
+    setView("history");
+    try {
+      const r: any = await invoke("get_history");
+      setHistory((r.items || []).map((h: any) => ({ id: h.id, title: h.title, channel_title: h.channel_title, thumbnail: h.thumbnail } as Video)));
+    } catch (e) { setError(String(e)); }
   }
 
   async function loadSubs() {
@@ -147,6 +221,7 @@ export default function App() {
           placeholder="Search YouTube..."
         />
         <button onClick={() => search()}>Search</button>
+        <button onClick={loadHistory}>History</button>
         <button onClick={() => (authed ? loadSubs() : doLogin())}>
           {authed ? "Subscriptions" : "Sign in"}
         </button>
@@ -187,7 +262,7 @@ export default function App() {
         <div className="grid">
           {results.map((v) => (
             <div key={v.id} className="card" onClick={() => openVideo(v.id)}>
-              {v.thumbnail && <img src={v.thumbnail} alt="" />}
+              {v.thumbnail && <Thumb url={v.thumbnail} alt="" />}
               <div className="cardtitle">{v.title}</div>
               <div className="cardmeta">{v.channel_title} · {fmtDuration(v.duration)}</div>
             </div>
@@ -198,25 +273,47 @@ export default function App() {
         </div>
       )}
 
+      {view === "history" && (
+        <div className="subs">
+          <h2>Watch History</h2>
+          <div className="sublist">
+            {history.map((v) => (
+              <div key={v.id} className="subitem" onClick={() => openVideo(v.id)}>
+                {v.thumbnail && <Thumb url={v.thumbnail} alt="" />}
+                <span>{v.title} — {v.channel_title}</span>
+              </div>
+            ))}
+            {history.length === 0 && <p className="hint">No history yet.</p>}
+          </div>
+          <button onClick={async () => { await invoke("clear_history"); setHistory([]); }}>Clear history</button>
+          <button onClick={() => setView("search")}>Back</button>
+        </div>
+      )}
+
       {view === "watch" && watchId && (
         <div className="watch">
           <div className="nativebar">
             {mpvAvailable ? (
-              <button className="playnative" onClick={async () => {
-                try { await invoke("play_in_mpv", { videoId: watchId }); }
-                catch (e) { setError(String(e)); }
-              }}>Play in mpv (native, independent)</button>
+              <>
+                <button className="playnative" onClick={async () => {
+                  try { await invoke("play_in_mpv", { videoId: watchId }); }
+                  catch (e) { setError(String(e)); }
+                }}>Play in mpv (native)</button>
+                <button onClick={async () => {
+                  try { await invoke("pip_play", { videoId: watchId }); }
+                  catch (e) { setError(String(e)); }
+                }}>PiP</button>
+                <button onClick={async () => {
+                  try { const p = await invoke<string>("download_video", { videoId: watchId }); alert("Downloaded: " + p); }
+                  catch (e) { setError(String(e)); }
+                }}>Download</button>
+              </>
             ) : (
               <span className="hint">mpv not installed — using embedded player. Install mpv for native playback.</span>
             )}
           </div>
           <div className="player">
-            <iframe
-              src={`https://www.youtube.com/embed/${watchId}?autoplay=1&enablejsapi=1`}
-              title="player"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
+            <div id="yt-player" />
           </div>
           {watchMeta && (
             <div className="meta">
@@ -248,7 +345,7 @@ export default function App() {
               <h3>Related</h3>
               {related.map((v) => (
                 <div key={v.id} className="relatedcard" onClick={() => openVideo(v.id)}>
-                  {v.thumbnail && <img src={v.thumbnail} alt="" />}
+                  {v.thumbnail && <Thumb url={v.thumbnail} alt="" />}
                   <div>
                     <div className="cardtitle">{v.title}</div>
                     <div className="cardmeta">{v.channel_title}</div>
@@ -267,7 +364,7 @@ export default function App() {
           {channelData && (
             <>
               <div className="cheader">
-                {channelData.thumbnail && <img src={channelData.thumbnail} alt="" />}
+                {channelData.thumbnail && <Thumb url={channelData.thumbnail} alt="" />}
                 <div>
                   <h2>{channelData.title}</h2>
                   <p>{channelData.subscriberCount} subscribers · {channelData.videoCount} videos</p>
@@ -279,7 +376,7 @@ export default function App() {
           <div className="grid">
             {channelVideos.map((v) => (
               <div key={v.id} className="card" onClick={() => openVideo(v.id)}>
-                {v.thumbnail && <img src={v.thumbnail} alt="" />}
+                {v.thumbnail && <Thumb url={v.thumbnail} alt="" />}
                 <div className="cardtitle">{v.title}</div>
                 <div className="cardmeta">{fmtDuration(v.duration)}</div>
               </div>
@@ -296,7 +393,7 @@ export default function App() {
             {subs.length === 0 && <p className="hint">Subscriptions require a YouTube Data API key (set in Settings). Watching and search work without one.</p>}
             {subs.map((s) => (
               <div key={s.id} className="subitem" onClick={() => s.channelId && openChannel(s.channelId)}>
-                {s.thumbnail && <img src={s.thumbnail} alt="" />}
+                {s.thumbnail && <Thumb url={s.thumbnail} alt="" />}
                 <span>{s.title}</span>
               </div>
             ))}

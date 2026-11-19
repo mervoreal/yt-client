@@ -166,6 +166,96 @@ pub async fn get_related(_state: State<'_, AppState>, video_id: String) -> Resul
 }
 
 #[tauri::command]
+pub async fn record_watch(state: State<'_, AppState>, video_id: String, title: String, channel_title: Option<String>, thumbnail: Option<String>, progress: Option<f64>) -> Result<()> {
+    state.db.record_history(&video_id, &title, channel_title.as_deref(), thumbnail.as_deref(), progress.unwrap_or(0.0))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_history(state: State<'_, AppState>) -> Result<serde_json::Value> {
+    let rows = state.db.get_history(50)?;
+    let items: Vec<serde_json::Value> = rows.into_iter().map(|(id,title,channel,thumb,watched,progress)| {
+        serde_json::json!({
+            "id": id, "title": title, "channel_title": channel, "thumbnail": thumb,
+            "watched_at": watched, "progress": progress,
+        })
+    }).collect();
+    Ok(serde_json::json!({ "items": items }))
+}
+
+#[tauri::command]
+pub async fn clear_history(state: State<'_, AppState>) -> Result<()> {
+    state.db.clear_history()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_thumbnail(state: State<'_, AppState>, url: String) -> Result<String> {
+    // check cache
+    if let Ok(Some(path)) = state.db.get_kv(&format!("thumb:{}", url)) {
+        if let Ok(bytes) = std::fs::read(&path) {
+            let mime = if path.ends_with(".webp") { "image/webp" } else if path.ends_with(".png") { "image/png" } else { "image/jpeg" };
+            use base64::Engine;
+            return Ok(format!("data:{};base64,{}", mime, base64::engine::general_purpose::STANDARD.encode(bytes)));
+        }
+    }
+    // download
+    let resp = reqwest::get(&url).await.map_err(|e| crate::error::AppError::Http(e.to_string()))?;
+    let bytes = resp.bytes().await.map_err(|e| crate::error::AppError::Http(e.to_string()))?;
+    let cache_dir = dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join("yt-client").join("thumbs");
+    std::fs::create_dir_all(&cache_dir).map_err(|e| crate::error::AppError::Io(e.to_string()))?;
+    // filename from url hash
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    url.hash(&mut h);
+    let ext = if url.contains(".webp") { "webp" } else if url.contains(".png") { "png" } else { "jpg" };
+    let path = cache_dir.join(format!("{:x}.{}", h.finish(), ext));
+    std::fs::write(&path, &bytes).map_err(|e| crate::error::AppError::Io(e.to_string()))?;
+    let _ = state.db.set_kv(&format!("thumb:{}", url), &path.to_string_lossy());
+    let mime = if ext == "webp" { "image/webp" } else if ext == "png" { "image/png" } else { "image/jpeg" };
+    use base64::Engine;
+    Ok(format!("data:{};base64,{}", mime, base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
+#[tauri::command]
+pub async fn download_video(_state: State<'_, AppState>, video_id: String) -> Result<String> {
+    let url = format!("https://www.youtube.com/watch?v={}", video_id);
+    let dir = dirs::data_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join("yt-client").join("downloads");
+    std::fs::create_dir_all(&dir).map_err(|e| crate::error::AppError::Io(e.to_string()))?;
+    let out_template = dir.join("%(id)s.%(ext)s");
+    let status = tokio::process::Command::new("yt-dlp")
+        .args(["-f", "best[acodec!=none][vcodec!=none]/best", "-o", out_template.to_str().unwrap(), "--js-runtimes", "node", "--no-warnings", &url])
+        .status().await.map_err(|e| crate::error::AppError::Io(e.to_string()))?;
+    if !status.success() { return Err(crate::error::AppError::Api("download failed".into())); }
+    // find the file
+    for entry in std::fs::read_dir(&dir).map_err(|e| crate::error::AppError::Io(e.to_string()))? {
+        let e = entry.map_err(|e| crate::error::AppError::Io(e.to_string()))?;
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with(&video_id) { return Ok(e.path().to_string_lossy().to_string()); }
+    }
+    Err(crate::error::AppError::NotFound("downloaded file".into()))
+}
+
+#[tauri::command]
+pub async fn play_local(path: String) -> Result<()> {
+    let mut cmd = std::process::Command::new("mpv");
+    cmd.arg(&path).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    cmd.spawn().map_err(|e| crate::error::AppError::Io(format!("mpv: {e}")))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn pip_play(video_id: String) -> Result<()> {
+    let url = format!("https://www.youtube.com/watch?v={}", video_id);
+    let mut cmd = std::process::Command::new("mpv");
+    cmd.args(["--ontop", "--no-border", "--geometry=320x180+100+100", "--autofit=320x180", &url])
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    cmd.spawn().map_err(|e| crate::error::AppError::Io(format!("mpv: {e}")))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn check_mpv() -> Result<bool> {
     // check if mpv is on PATH
     let status = std::process::Command::new("mpv").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status();
