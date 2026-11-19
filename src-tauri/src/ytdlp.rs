@@ -61,7 +61,8 @@ pub fn to_video_view(d: &Value) -> VideoView {
 
 pub async fn search(query: &str, max: usize) -> Result<Vec<VideoView>> {
     let spec = format!("ytsearch{}:{}", max, query);
-    let out = run(&["--dump-json", &spec]).await?;
+    // --flat-playlist is much faster: only the search results page, no per-video fetches.
+    let out = run(&["--dump-json", "--flat-playlist", &spec]).await?;
     let mut items = Vec::new();
     for line in out.lines() {
         let line = line.trim();

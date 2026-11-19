@@ -47,6 +47,7 @@ export default function App() {
   const [mpvAvailable, setMpvAvailable] = useState(false);
   const [history, setHistory] = useState<Video[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showEmbedded, setShowEmbedded] = useState(false);
   const playerRef = useRef<any>(null);
   const [settings, setSettings] = useState({ api_key: "", client_id: "", client_secret: "" });
 
@@ -111,7 +112,7 @@ export default function App() {
   }, [query]);
 
   useEffect(() => {
-    if (view !== "watch" || !watchId) return;
+    if (view !== "watch" || !watchId || !showEmbedded) return;
     const create = () => {
       const YT = (window as any).YT;
       if (!YT || !YT.Player) return false;
@@ -119,7 +120,7 @@ export default function App() {
         if (playerRef.current) { try { playerRef.current.destroy(); } catch {} }
         playerRef.current = new YT.Player("yt-player", {
           videoId: watchId,
-          playerVars: { autoplay: 1, enablejsapi: 1, rel: 0 },
+          playerVars: { autoplay: 1, enablejsapi: 1, rel: 0, origin: window.location.origin },
           events: { onReady: () => {} },
         });
         return true;
@@ -343,9 +344,29 @@ export default function App() {
               <span className="hint">mpv not installed — using embedded player. Install mpv for native playback.</span>
             )}
           </div>
-          <div className="player">
-            <div id="yt-player" />
-          </div>
+          {showEmbedded && (
+            <div className="player">
+              <div id="yt-player" />
+            </div>
+          )}
+          {!showEmbedded && (
+            <button className="toggleembed" onClick={() => setShowEmbedded(true)}>Show embedded player (may not work for all videos)</button>
+          )}
+          {showEmbedded && (
+            <button className="toggleembed" onClick={() => setShowEmbedded(false)}>Hide embedded player</button>
+          )}
+          {mpvAvailable && (
+            <div className="playprompt">
+              <button className="playnative big" onClick={async () => {
+                try { await invoke("play_in_mpv", { videoId: watchId }); }
+                catch (e) { setError(String(e)); }
+              }}>▶ Play in mpv (native)</button>
+              <button onClick={async () => {
+                try { await invoke("mini_player", { videoId: watchId }); }
+                catch (e) { setError(String(e)); }
+              }}>Mini player</button>
+            </div>
+          )}
           {watchMeta && (
             <div className="meta">
               <h2>{watchMeta.title}</h2>

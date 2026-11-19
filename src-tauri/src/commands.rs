@@ -40,7 +40,7 @@ impl From<VideoItem> for VideoView {
 
 #[tauri::command]
 pub async fn search_videos(_state: State<'_, AppState>, query: String, _page_token: Option<String>) -> Result<serde_json::Value> {
-    let items = crate::ytdlp::search(&query, 12).await?;
+    let items = crate::ytdlp::search(&query, 8).await?;
     Ok(serde_json::json!({ "items": items, "nextPageToken": null }))
 }
 
