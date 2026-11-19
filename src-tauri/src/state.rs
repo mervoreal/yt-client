@@ -21,8 +21,21 @@ impl AppState {
         Self { db, http: reqwest::Client::new(), api_key, oauth }
     }
 
+    pub fn effective_api_key(&self) -> Option<String> {
+        self.db.get_kv("api_key").ok().flatten().filter(|s| !s.trim().is_empty()).or_else(|| self.api_key.clone())
+    }
+
+    pub fn effective_oauth(&self) -> Option<OAuthConfig> {
+        let cid = self.db.get_kv("client_id").ok().flatten().filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("YT_CLIENT_ID").ok());
+        let cid = cid?;
+        let csec = self.db.get_kv("client_secret").ok().flatten().filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("YT_CLIENT_SECRET").ok());
+        Some(OAuthConfig { client_id: cid, client_secret: csec })
+    }
+
     pub fn yt(&self) -> YtClient {
         let token = self.db.get_kv("access_token").ok().flatten();
-        YtClient::new(self.api_key.clone()).with_token(token)
+        YtClient::new(self.effective_api_key()).with_token(token)
     }
 }

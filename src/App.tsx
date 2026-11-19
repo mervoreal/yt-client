@@ -29,9 +29,15 @@ export default function App() {
   const [channelVideos, setChannelVideos] = useState<Video[]>([]);
   const [subs, setSubs] = useState<Sub[]>([]);
   const [authed, setAuthed] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState({ api_key: "", client_id: "", client_secret: "" });
 
   useEffect(() => {
-    invoke<boolean>("auth_status").then((r: any) => setAuthed(!!r.authenticated)).catch(() => {});
+    invoke<any>("auth_status").then((r) => setAuthed(!!r.authenticated)).catch(() => {});
+    invoke<any>("get_settings").then((r) => {
+      setSettings({ api_key: r.api_key || "", client_id: r.client_id || "", client_secret: r.client_secret || "" });
+      if (!r.has_api_key) setShowSettings(true);
+    }).catch(() => {});
   }, []);
 
   async function search(q?: string, token?: string | null) {
@@ -135,7 +141,34 @@ export default function App() {
           {authed ? "Subscriptions" : "Sign in"}
         </button>
         {authed && <button onClick={doLogout}>Sign out</button>}
+        <button onClick={() => setShowSettings(true)}>Settings</button>
       </header>
+
+      {showSettings && (
+        <div className="modal-backdrop" onClick={() => setShowSettings(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Settings</h2>
+            <p className="hint">
+              Create credentials in Google Cloud Console (YouTube Data API v3 enabled, OAuth "Desktop app").
+              <br />
+              <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">Open Google Cloud Console</a>
+            </p>
+            <label>API Key</label>
+            <input value={settings.api_key} onChange={(e) => setSettings({ ...settings, api_key: e.target.value })} placeholder="AIza..." />
+            <label>OAuth Client ID</label>
+            <input value={settings.client_id} onChange={(e) => setSettings({ ...settings, client_id: e.target.value })} placeholder="....apps.googleusercontent.com" />
+            <label>OAuth Client Secret (optional)</label>
+            <input value={settings.client_secret} onChange={(e) => setSettings({ ...settings, client_secret: e.target.value })} placeholder="GOCSPX-..." />
+            <div className="modal-actions">
+              <button onClick={async () => {
+                await invoke("set_settings", { apiKey: settings.api_key, clientId: settings.client_id, clientSecret: settings.client_secret });
+                setShowSettings(false);
+              }}>Save</button>
+              <button onClick={() => setShowSettings(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <div className="error">{error}</div>}
       {loading && <div className="loading">Loading...</div>}

@@ -152,8 +152,27 @@ pub async fn auth_status(state: State<'_, AppState>) -> Result<serde_json::Value
 }
 
 #[tauri::command]
+pub async fn get_settings(state: State<'_, AppState>) -> Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "api_key": state.db.get_kv("api_key").ok().flatten().unwrap_or_default(),
+        "client_id": state.db.get_kv("client_id").ok().flatten().unwrap_or_default(),
+        "client_secret": state.db.get_kv("client_secret").ok().flatten().unwrap_or_default(),
+        "has_api_key": state.effective_api_key().is_some(),
+        "has_client_id": state.effective_oauth().is_some(),
+    }))
+}
+
+#[tauri::command]
+pub async fn set_settings(state: State<'_, AppState>, api_key: Option<String>, client_id: Option<String>, client_secret: Option<String>) -> Result<()> {
+    if let Some(v) = api_key { state.db.set_kv("api_key", &v)?; }
+    if let Some(v) = client_id { state.db.set_kv("client_id", &v)?; }
+    if let Some(v) = client_secret { state.db.set_kv("client_secret", &v)?; }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn auth_login(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String> {
-    let cfg = state.oauth.clone().ok_or_else(|| crate::error::AppError::Auth("YT_CLIENT_ID not set".into()))?;
+    let cfg = state.effective_oauth().ok_or_else(|| crate::error::AppError::Auth("Client ID not set. Open Settings.".into()))?;
     let db = state.db.clone();
     let opener = |url: &str| { let _ = tauri_plugin_opener::open_url(url, None::<&str>); };
     let token = auth::run_oauth_flow(cfg, db, opener).await?;
