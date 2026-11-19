@@ -3,6 +3,7 @@ use crate::error::Result;
 use crate::state::AppState;
 use crate::youtube::*;
 use serde::Serialize;
+use std::process::Stdio;
 use tauri::State;
 
 #[derive(Serialize)]
@@ -41,12 +42,11 @@ impl From<VideoItem> for VideoView {
 pub async fn search_videos(state: State<'_, AppState>, query: String, page_token: Option<String>) -> Result<serde_json::Value> {
     let yt = state.yt();
     let resp = yt.search(&query, 20, page_token.as_deref()).await?;
-    // fetch full video details for durations
     let ids: Vec<String> = resp.items.iter().filter_map(|i| i.id.as_ref()?.videoId.clone()).collect();
     let details = yt.videos(&ids).await.unwrap_or(VideosResponse { items: vec![] });
     let map: std::collections::HashMap<String, VideoItem> = details.items.into_iter().map(|v| (v.id.clone(), v)).collect();
-    let items: Vec<VideoView> = ids.iter().filter_map(|id| map.get(id).cloned().map(VideoView::from).or_else(|| {
-        // fallback from search snippet
+    let items: Vec<VideoView> = ids.iter().filter_map(|id| {
+        if let Some(v) = map.get(id).cloned() { return Some(VideoView::from(v)); }
         resp.items.iter().find(|s| s.id.as_ref().and_then(|x| x.videoId.as_ref()) == Some(id)).map(|s| {
             let sn = s.snippet.clone().unwrap_or_default();
             VideoView {
@@ -61,7 +61,7 @@ pub async fn search_videos(state: State<'_, AppState>, query: String, page_token
                 view_count: None,
             }
         })
-    })).collect();
+    }).collect();
     let next = resp.nextPageToken;
     Ok(serde_json::json!({ "items": items, "nextPageToken": next }))
 }
@@ -137,7 +137,6 @@ pub async fn get_subscriptions(state: State<'_, AppState>, page_token: Option<St
 
 #[tauri::command]
 pub async fn get_subscription_feed(state: State<'_, AppState>, channel_id: String) -> Result<serde_json::Value> {
-    // use the channel's uploads playlist
     let yt = state.yt();
     let ch = yt.channels(&[channel_id.clone()]).await?;
     let c = ch.items.into_iter().next().ok_or_else(|| crate::error::AppError::NotFound(channel_id.clone()))?;
@@ -148,7 +147,23 @@ pub async fn get_subscription_feed(state: State<'_, AppState>, channel_id: Strin
 #[tauri::command]
 pub async fn auth_status(state: State<'_, AppState>) -> Result<serde_json::Value> {
     let token = state.db.get_kv("access_token").ok().flatten();
-    Ok(serde_json::json!({ "authenticated": token.is_some() }))
+    Ok(serde_json::json!({ "authenticated": token.is_some() && !token.unwrap_or_default().is_empty() }))
+}
+
+#[tauri::command]
+pub async fn auth_login(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String> {
+    let cfg = state.effective_oauth().ok_or_else(|| crate::error::AppError::Auth("Client ID not set. Open Settings.".into()))?;
+    let db = state.db.clone();
+    let opener = |url: &str| { let _ = tauri_plugin_opener::open_url(url, None::<&str>); };
+    let token = auth::run_oauth_flow(cfg, db, opener).await?;
+    Ok(token)
+}
+
+#[tauri::command]
+pub async fn auth_logout(state: State<'_, AppState>) -> Result<()> {
+    state.db.set_kv("access_token", "")?;
+    state.db.set_kv("refresh_token", "")?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -171,17 +186,28 @@ pub async fn set_settings(state: State<'_, AppState>, api_key: Option<String>, c
 }
 
 #[tauri::command]
-pub async fn auth_login(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String> {
-    let cfg = state.effective_oauth().ok_or_else(|| crate::error::AppError::Auth("Client ID not set. Open Settings.".into()))?;
-    let db = state.db.clone();
-    let opener = |url: &str| { let _ = tauri_plugin_opener::open_url(url, None::<&str>); };
-    let token = auth::run_oauth_flow(cfg, db, opener).await?;
-    Ok(token)
+pub async fn check_mpv() -> Result<bool> {
+    // check if mpv is on PATH
+    let status = std::process::Command::new("mpv").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status();
+    Ok(status.map(|s| s.success()).unwrap_or(false))
 }
 
 #[tauri::command]
-pub async fn auth_logout(state: State<'_, AppState>) -> Result<()> {
-    state.db.set_kv("access_token", "")?;
-    state.db.set_kv("refresh_token", "")?;
+pub async fn play_in_mpv(video_id: String) -> Result<()> {
+    let url = format!("https://www.youtube.com/watch?v={}", video_id);
+    // spawn mpv detached so it doesn't block
+    let mut cmd = std::process::Command::new("mpv");
+    cmd.arg(&url)
+        .arg("--force-window=immediate")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // detach
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.spawn().map_err(|e| crate::error::AppError::Io(format!("mpv not found or failed to start: {e}")))?;
     Ok(())
 }

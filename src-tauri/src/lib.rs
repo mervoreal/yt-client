@@ -28,6 +28,8 @@ pub fn run() {
             commands::auth_logout,
             commands::get_settings,
             commands::set_settings,
+            commands::check_mpv,
+            commands::play_in_mpv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -30,6 +30,7 @@ export default function App() {
   const [subs, setSubs] = useState<Sub[]>([]);
   const [authed, setAuthed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [mpvAvailable, setMpvAvailable] = useState(false);
   const [settings, setSettings] = useState({ api_key: "", client_id: "", client_secret: "" });
 
   useEffect(() => {
@@ -38,6 +39,7 @@ export default function App() {
       setSettings({ api_key: r.api_key || "", client_id: r.client_id || "", client_secret: r.client_secret || "" });
       if (!r.has_api_key) setShowSettings(true);
     }).catch(() => {});
+    invoke<boolean>("check_mpv").then((r) => setMpvAvailable(!!r)).catch(() => setMpvAvailable(false));
   }, []);
 
   async function search(q?: string, token?: string | null) {
@@ -190,6 +192,16 @@ export default function App() {
 
       {view === "watch" && watchId && (
         <div className="watch">
+          <div className="nativebar">
+            {mpvAvailable ? (
+              <button className="playnative" onClick={async () => {
+                try { await invoke("play_in_mpv", { videoId: watchId }); }
+                catch (e) { setError(String(e)); }
+              }}>Play in mpv (native, independent)</button>
+            ) : (
+              <span className="hint">mpv not installed — using embedded player. Install mpv for native playback.</span>
+            )}
+          </div>
           <div className="player">
             <iframe
               src={`https://www.youtube.com/embed/${watchId}?autoplay=1&enablejsapi=1`}
