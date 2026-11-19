@@ -46,6 +46,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [mpvAvailable, setMpvAvailable] = useState(false);
   const [history, setHistory] = useState<Video[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const playerRef = useRef<any>(null);
   const [settings, setSettings] = useState({ api_key: "", client_id: "", client_secret: "" });
 
@@ -72,6 +73,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (view !== "watch" || !watchId || !watchMeta) return;
+    const interval = setInterval(() => {
+      const p = playerRef.current;
+      if (p && p.getCurrentTime) {
+        const t = p.getCurrentTime();
+        const dur = p.getDuration?.() || 0;
+        const progress = dur > 0 ? t / dur : 0;
+        invoke("record_watch", { videoId: watchId, title: watchMeta.title, channelTitle: watchMeta.channel_title, thumbnail: watchMeta.thumbnail, progress }).catch(() => {});
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [view, watchId, watchMeta]);
+
+  useEffect(() => {
     if (view !== "watch") return;
     const onKey = (e: KeyboardEvent) => {
       const p = playerRef.current;
@@ -87,6 +102,14 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [view]);
+
+  useEffect(() => {
+    if (!query.trim()) { setSuggestions([]); return; }
+    const t = setTimeout(() => {
+      invoke<any>("search_suggestions", { query }).then((r) => setSuggestions(r.items || [])).catch(() => setSuggestions([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query]);
 
   useEffect(() => {
     if (view !== "watch" || !watchId) return;
@@ -213,14 +236,23 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <button className="logo" onClick={() => setView("search")}>YT</button>
-        <input
-          className="searchbox"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") search(); }}
-          placeholder="Search YouTube..."
-        />
-        <button onClick={() => search()}>Search</button>
+        <div className="searchwrap">
+          <input
+            className="searchbox"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { setSuggestions([]); search(); } }}
+            placeholder="Search YouTube..."
+          />
+          {suggestions.length > 0 && (
+            <div className="suggestions">
+              {suggestions.map((s) => (
+                <div key={s} className="suggestion" onClick={() => { setQuery(s); setSuggestions([]); search(s); }}>{s}</div>
+              ))}
+            </div>
+          )}
+        </div>
+        <button onClick={() => { setSuggestions([]); search(); }}>Search</button>
         <button onClick={loadHistory}>History</button>
         <button onClick={() => (authed ? loadSubs() : doLogin())}>
           {authed ? "Subscriptions" : "Sign in"}
@@ -323,6 +355,16 @@ export default function App() {
               </p>
               <div className="stats">{watchMeta.view_count} views · {fmtDuration(watchMeta.duration)}</div>
               <p className="desc">{watchMeta.description}</p>
+              <div className="actionrow">
+                {authed && (
+                  <>
+                    <button onClick={async () => { try { await invoke("like_video", { videoId: watchId, like: true }); } catch (e) { setError(String(e)); } }}>👍 Like</button>
+                    <button onClick={async () => { try { await invoke("like_video", { videoId: watchId, like: false }); } catch (e) { setError(String(e)); } }}>Remove like</button>
+                    <button onClick={async () => { try { await invoke("add_to_watch_later", { videoId: watchId }); alert("Added to Watch Later"); } catch (e) { setError(String(e)); } }}>Watch Later</button>
+                  </>
+                )}
+                {mpvAvailable && <button onClick={async () => { try { await invoke("mini_player", { videoId: watchId }); } catch (e) { setError(String(e)); } }}>Mini player</button>}
+              </div>
             </div>
           )}
 

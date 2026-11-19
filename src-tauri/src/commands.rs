@@ -256,6 +256,97 @@ pub async fn pip_play(video_id: String) -> Result<()> {
 }
 
 #[tauri::command]
+pub async fn search_suggestions(_state: State<'_, AppState>, query: String) -> Result<serde_json::Value> {
+    if query.trim().is_empty() { return Ok(serde_json::json!({ "items": [] })); }
+    let url = format!("https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q={}", urlencoding(&query));
+    let text = reqwest::get(&url).await.map_err(|e| crate::error::AppError::Http(e.to_string()))?.text().await.map_err(|e| crate::error::AppError::Http(e.to_string()))?;
+    // parse JSONP: ...([...])
+    let mut items = Vec::new();
+    // find array of suggestions: "suggestions":[["...",0],...]
+    if let Some(start) = text.find("suggestions") {
+        let rest = &text[start..];
+        // find first '[' after suggestions
+        if let Some(bracket) = rest.find('[') {
+            let arr_str = &rest[bracket..];
+            // find matching close by scanning
+            let mut depth = 0;
+            let mut end = 0;
+            for (i, ch) in arr_str.char_indices() {
+                if ch == '[' { depth += 1; }
+                else if ch == ']' { depth -= 1; if depth == 0 { end = i + 1; break; } }
+            }
+            if end > 0 {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&arr_str[..end]) {
+                    if let Some(arr) = val.as_array() {
+                        for entry in arr {
+                            if let Some(s) = entry.get(0).and_then(|x| x.as_str()) {
+                                items.push(s.to_string());
+                            } else if let Some(s) = entry.as_str() {
+                                items.push(s.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(serde_json::json!({ "items": items }))
+}
+
+fn urlencoding(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
+#[tauri::command]
+pub async fn like_video(state: State<'_, AppState>, video_id: String, like: bool) -> Result<()> {
+    let yt = state.yt();
+    let token = state.db.get_kv("access_token").ok().flatten().filter(|s| !s.is_empty()).ok_or_else(|| crate::error::AppError::Auth("not logged in".into()))?;
+    let _ = token;
+    // Use YouTube Data API videos.rate
+    let rating = if like { "like" } else { "none" };
+    let url = format!("https://www.googleapis.com/youtube/v3/videos/rate?id={}&rating={}", video_id, rating);
+    let client = reqwest::Client::new();
+    let resp = client.post(&url).bearer_auth(state.db.get_kv("access_token").ok().flatten().unwrap_or_default()).send().await.map_err(|e| crate::error::AppError::Http(e.to_string()))?;
+    if !resp.status().is_success() {
+        let t = resp.text().await.unwrap_or_default();
+        return Err(crate::error::AppError::Api(format!("rate failed: {t}")));
+    }
+    let _ = yt;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn add_to_watch_later(state: State<'_, AppState>, video_id: String) -> Result<()> {
+    // watch later playlist id is "WL"
+    let body = serde_json::json!({
+        "snippet": {
+            "playlistId": "WL",
+            "resourceId": { "kind": "youtube#video", "videoId": video_id }
+        }
+    });
+    let client = reqwest::Client::new();
+    let resp = client.post("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet")
+        .bearer_auth(state.db.get_kv("access_token").ok().flatten().unwrap_or_default())
+        .json(&body)
+        .send().await.map_err(|e| crate::error::AppError::Http(e.to_string()))?;
+    if !resp.status().is_success() {
+        let t = resp.text().await.unwrap_or_default();
+        return Err(crate::error::AppError::Api(format!("watch later failed: {t}")));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn mini_player(video_id: String) -> Result<()> {
+    let url = format!("https://www.youtube.com/watch?v={}", video_id);
+    let mut cmd = std::process::Command::new("mpv");
+    cmd.args(["--geometry=480x270", "--ontop", "--title=Mini Player", &url])
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    cmd.spawn().map_err(|e| crate::error::AppError::Io(format!("mpv: {e}")))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn check_mpv() -> Result<bool> {
     // check if mpv is on PATH
     let status = std::process::Command::new("mpv").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status();

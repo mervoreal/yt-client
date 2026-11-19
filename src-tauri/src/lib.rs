@@ -64,6 +64,10 @@ pub fn run() {
             commands::download_video,
             commands::play_local,
             commands::pip_play,
+            commands::search_suggestions,
+            commands::like_video,
+            commands::add_to_watch_later,
+            commands::mini_player,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
