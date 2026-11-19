@@ -54,7 +54,6 @@ export default function App() {
     invoke<any>("auth_status").then((r) => setAuthed(!!r.authenticated)).catch(() => {});
     invoke<any>("get_settings").then((r) => {
       setSettings({ api_key: r.api_key || "", client_id: r.client_id || "", client_secret: r.client_secret || "" });
-      if (!r.has_api_key) setShowSettings(true);
     }).catch(() => {});
     invoke<boolean>("check_mpv").then((r) => setMpvAvailable(!!r)).catch(() => setMpvAvailable(false));
   }, []);
@@ -432,7 +431,7 @@ export default function App() {
         <div className="subs">
           <h2>Subscriptions</h2>
           <div className="sublist">
-            {subs.length === 0 && <p className="hint">Subscriptions require a YouTube Data API key (set in Settings). Watching and search work without one.</p>}
+            {subs.length === 0 && <p className="hint">No subscriptions found. Sign into YouTube in your browser (Chrome/Firefox) so yt-dlp can read your feed, then retry.</p>}
             {subs.map((s) => (
               <div key={s.id} className="subitem" onClick={() => s.channelId && openChannel(s.channelId)}>
                 {s.thumbnail && <Thumb url={s.thumbnail} alt="" />}

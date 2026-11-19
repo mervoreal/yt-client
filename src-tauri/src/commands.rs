@@ -99,8 +99,35 @@ pub async fn get_playlist_items(_state: State<'_, AppState>, playlist_id: String
 
 #[tauri::command]
 pub async fn get_subscriptions(_state: State<'_, AppState>, _page_token: Option<String>) -> Result<serde_json::Value> {
-    // Subscriptions require a YouTube Data API key + OAuth. Without an API key, return empty.
-    Ok(serde_json::json!({ "items": [], "nextPageToken": null, "requires_api_key": true }))
+    // Try yt-dlp with browser cookies (no API key needed).
+    for browser in ["chrome", "firefox", "brave", "edge"] {
+        let cookie_arg = format!("--cookies-from-browser={}", browser);
+        let out = tokio::process::Command::new("yt-dlp")
+            .args(["--dump-json", "--flat-playlist", &cookie_arg, "--playlist-end", "50", "https://www.youtube.com/feed/subscriptions"])
+            .arg("--js-runtimes").arg("node").arg("--no-warnings")
+            .output().await;
+        if let Ok(o) = out {
+            if o.status.success() {
+                let mut items = Vec::new();
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    let line = line.trim();
+                    if line.is_empty() { continue; }
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                        items.push(serde_json::json!({
+                            "id": v.get("id"),
+                            "title": v.get("title"),
+                            "thumbnail": v.get("thumbnail").or_else(|| v.get("thumbnails").and_then(|t| t.as_array()).and_then(|a| a.last()).and_then(|x| x.get("url"))),
+                            "channelId": v.get("channel_id").or_else(|| v.get("uploader_id")),
+                        }));
+                    }
+                }
+                if !items.is_empty() {
+                    return Ok(serde_json::json!({ "items": items, "nextPageToken": null }));
+                }
+            }
+        }
+    }
+    Ok(serde_json::json!({ "items": [], "nextPageToken": null }))
 }
 
 #[tauri::command]
