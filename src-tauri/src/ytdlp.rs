@@ -17,6 +17,9 @@ async fn run(args: &[&str]) -> Result<String> {
     cmd.args(args)
         .arg("--js-runtimes").arg("node")
         .arg("--no-warnings")
+        .env_remove("PYTHONHOME")
+        .env_remove("PYTHONPATH")
+        .env_remove("PYTHONSTARTUP")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let out = cmd.output().await.map_err(|e| AppError::Io(format!("yt-dlp: {e}")))?;

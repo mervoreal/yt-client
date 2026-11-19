@@ -105,6 +105,7 @@ pub async fn get_subscriptions(_state: State<'_, AppState>, _page_token: Option<
         let out = tokio::process::Command::new("yt-dlp")
             .args(["--dump-json", "--flat-playlist", &cookie_arg, "--playlist-end", "50", "https://www.youtube.com/feed/subscriptions"])
             .arg("--js-runtimes").arg("node").arg("--no-warnings")
+            .env_remove("PYTHONHOME").env_remove("PYTHONPATH").env_remove("PYTHONSTARTUP")
             .output().await;
         if let Ok(o) = out {
             if o.status.success() {
@@ -253,6 +254,7 @@ pub async fn download_video(_state: State<'_, AppState>, video_id: String) -> Re
     let out_template = dir.join("%(id)s.%(ext)s");
     let status = tokio::process::Command::new("yt-dlp")
         .args(["-f", "best[acodec!=none][vcodec!=none]/best", "-o", out_template.to_str().unwrap(), "--js-runtimes", "node", "--no-warnings", &url])
+        .env_remove("PYTHONHOME").env_remove("PYTHONPATH").env_remove("PYTHONSTARTUP")
         .status().await.map_err(|e| crate::error::AppError::Io(e.to_string()))?;
     if !status.success() { return Err(crate::error::AppError::Api("download failed".into())); }
     // find the file
@@ -268,6 +270,7 @@ pub async fn download_video(_state: State<'_, AppState>, video_id: String) -> Re
 pub async fn play_local(path: String) -> Result<()> {
     let mut cmd = std::process::Command::new("mpv");
     cmd.arg(&path).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    cmd.env_remove("PYTHONHOME").env_remove("PYTHONPATH").env_remove("PYTHONSTARTUP");
     cmd.spawn().map_err(|e| crate::error::AppError::Io(format!("mpv: {e}")))?;
     Ok(())
 }
@@ -278,6 +281,7 @@ pub async fn pip_play(video_id: String) -> Result<()> {
     let mut cmd = std::process::Command::new("mpv");
     cmd.args(["--ontop", "--no-border", "--geometry=320x180+100+100", "--autofit=320x180", &url])
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    cmd.env_remove("PYTHONHOME").env_remove("PYTHONPATH").env_remove("PYTHONSTARTUP");
     cmd.spawn().map_err(|e| crate::error::AppError::Io(format!("mpv: {e}")))?;
     Ok(())
 }
@@ -369,6 +373,7 @@ pub async fn mini_player(video_id: String) -> Result<()> {
     let mut cmd = std::process::Command::new("mpv");
     cmd.args(["--geometry=480x270", "--ontop", "--title=Mini Player", &url])
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    cmd.env_remove("PYTHONHOME").env_remove("PYTHONPATH").env_remove("PYTHONSTARTUP");
     cmd.spawn().map_err(|e| crate::error::AppError::Io(format!("mpv: {e}")))?;
     Ok(())
 }
@@ -398,6 +403,7 @@ pub async fn import_subscriptions() -> Result<serde_json::Value> {
         let out = tokio::process::Command::new("yt-dlp")
             .args(["--dump-json", "--flat-playlist", &cookie_arg, "--playlist-end", "100", "https://www.youtube.com/feed/subscriptions"])
             .arg("--js-runtimes").arg("node").arg("--no-warnings")
+            .env_remove("PYTHONHOME").env_remove("PYTHONPATH").env_remove("PYTHONSTARTUP")
             .output().await;
         if let Ok(o) = out {
             if o.status.success() {
@@ -426,7 +432,7 @@ pub async fn import_subscriptions() -> Result<serde_json::Value> {
 #[tauri::command]
 pub async fn check_mpv() -> Result<bool> {
     // check if mpv is on PATH
-    let status = std::process::Command::new("mpv").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let status = std::process::Command::new("mpv").arg("--version").env_remove("PYTHONHOME").env_remove("PYTHONPATH").env_remove("PYTHONSTARTUP").stdout(Stdio::null()).stderr(Stdio::null()).status();
     Ok(status.map(|s| s.success()).unwrap_or(false))
 }
 
@@ -446,6 +452,7 @@ pub async fn play_in_mpv(video_id: String) -> Result<()> {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    cmd.env_remove("PYTHONHOME").env_remove("PYTHONPATH").env_remove("PYTHONSTARTUP");
     cmd.spawn().map_err(|e| crate::error::AppError::Io(format!("mpv not found or failed to start: {e}")))?;
     Ok(())
 }
