@@ -1,0 +1,224 @@
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import "./App.css";
+
+type Video = {
+  id: string;
+  title: string;
+  channel_id?: string | null;
+  channel_title?: string | null;
+  description?: string | null;
+  thumbnail?: string | null;
+  duration?: string | null;
+  published_at?: string | null;
+  view_count?: string | null;
+};
+
+type Sub = { id: string; title?: string | null; thumbnail?: string | null; channelId?: string | null };
+
+export default function App() {
+  const [view, setView] = useState<"search" | "watch" | "channel" | "subs">("search");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Video[]>([]);
+  const [nextToken, setNextToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [watchId, setWatchId] = useState<string | null>(null);
+  const [watchMeta, setWatchMeta] = useState<Video | null>(null);
+  const [channelData, setChannelData] = useState<any>(null);
+  const [channelVideos, setChannelVideos] = useState<Video[]>([]);
+  const [subs, setSubs] = useState<Sub[]>([]);
+  const [authed, setAuthed] = useState(false);
+
+  useEffect(() => {
+    invoke<boolean>("auth_status").then((r: any) => setAuthed(!!r.authenticated)).catch(() => {});
+  }, []);
+
+  async function search(q?: string, token?: string | null) {
+    const qq = q ?? query;
+    if (!qq.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const r: any = await invoke("search_videos", { query: qq, pageToken: token ?? null });
+      const items = (r.items || []) as Video[];
+      if (token) setResults((prev) => [...prev, ...items]);
+      else setResults(items);
+      setNextToken(r.nextPageToken ?? null);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openVideo(id: string) {
+    setWatchId(id);
+    setView("watch");
+    try {
+      const v: any = await invoke("get_video", { id });
+      setWatchMeta(v as Video);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function openChannel(id: string) {
+    setView("channel");
+    setChannelData(null);
+    setChannelVideos([]);
+    try {
+      const c: any = await invoke("get_channel", { id });
+      setChannelData(c);
+      const feed: any = await invoke("get_subscription_feed", { channelId: id }).catch(() => null);
+      // fallback: try uploads via playlist items not exposed; use search by channel
+      if (feed && feed.items) setChannelVideos(feed.items as Video[]);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function loadSubs() {
+    setView("subs");
+    setLoading(true);
+    setError(null);
+    try {
+      const r: any = await invoke("get_subscriptions", { pageToken: null });
+      setSubs((r.items || []) as Sub[]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function doLogin() {
+    try {
+      await invoke("auth_login");
+      setAuthed(true);
+      await loadSubs();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function doLogout() {
+    await invoke("auth_logout");
+    setAuthed(false);
+    setSubs([]);
+  }
+
+  function fmtDuration(d?: string | null) {
+    if (!d) return "";
+    // PT#H#M#S
+    const m = d.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+    if (!m) return d;
+    const h = m[1] ? m[1] + ":" : "";
+    const mm = (m[2] || "0").padStart(h ? 2 : 1, "0");
+    const ss = (m[3] || "0").padStart(2, "0");
+    return `${h}${mm}:${ss}`;
+  }
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <button className="logo" onClick={() => setView("search")}>YT</button>
+        <input
+          className="searchbox"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") search(); }}
+          placeholder="Search YouTube..."
+        />
+        <button onClick={() => search()}>Search</button>
+        <button onClick={() => (authed ? loadSubs() : doLogin())}>
+          {authed ? "Subscriptions" : "Sign in"}
+        </button>
+        {authed && <button onClick={doLogout}>Sign out</button>}
+      </header>
+
+      {error && <div className="error">{error}</div>}
+      {loading && <div className="loading">Loading...</div>}
+
+      {view === "search" && (
+        <div className="grid">
+          {results.map((v) => (
+            <div key={v.id} className="card" onClick={() => openVideo(v.id)}>
+              {v.thumbnail && <img src={v.thumbnail} alt="" />}
+              <div className="cardtitle">{v.title}</div>
+              <div className="cardmeta">{v.channel_title} · {fmtDuration(v.duration)}</div>
+            </div>
+          ))}
+          {nextToken && (
+            <button className="more" onClick={() => search(query, nextToken)}>Load more</button>
+          )}
+        </div>
+      )}
+
+      {view === "watch" && watchId && (
+        <div className="watch">
+          <div className="player">
+            <iframe
+              src={`https://www.youtube.com/embed/${watchId}?autoplay=1&enablejsapi=1`}
+              title="player"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
+          {watchMeta && (
+            <div className="meta">
+              <h2>{watchMeta.title}</h2>
+              <p className="channel" onClick={() => watchMeta.channel_id && openChannel(watchMeta.channel_id)}>
+                {watchMeta.channel_title}
+              </p>
+              <p className="desc">{watchMeta.description}</p>
+            </div>
+          )}
+          <button onClick={() => setView("search")}>Back</button>
+        </div>
+      )}
+
+      {view === "channel" && (
+        <div className="channel">
+          {channelData && (
+            <>
+              <div className="cheader">
+                {channelData.thumbnail && <img src={channelData.thumbnail} alt="" />}
+                <div>
+                  <h2>{channelData.title}</h2>
+                  <p>{channelData.subscriberCount} subscribers · {channelData.videoCount} videos</p>
+                </div>
+              </div>
+              <p className="desc">{channelData.description}</p>
+            </>
+          )}
+          <div className="grid">
+            {channelVideos.map((v) => (
+              <div key={v.id} className="card" onClick={() => openVideo(v.id)}>
+                {v.thumbnail && <img src={v.thumbnail} alt="" />}
+                <div className="cardtitle">{v.title}</div>
+                <div className="cardmeta">{fmtDuration(v.duration)}</div>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => setView("search")}>Back</button>
+        </div>
+      )}
+
+      {view === "subs" && (
+        <div className="subs">
+          <h2>Subscriptions</h2>
+          <div className="sublist">
+            {subs.map((s) => (
+              <div key={s.id} className="subitem" onClick={() => s.channelId && openChannel(s.channelId)}>
+                {s.thumbnail && <img src={s.thumbnail} alt="" />}
+                <span>{s.title}</span>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => setView("search")}>Back</button>
+        </div>
+      )}
+    </div>
+  );
+}
