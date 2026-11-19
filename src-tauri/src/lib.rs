@@ -65,6 +65,8 @@ pub fn run() {
             commands::play_local,
             commands::pip_play,
             commands::search_suggestions,
+            commands::open_youtube_browser,
+            commands::import_subscriptions,
             commands::like_video,
             commands::add_to_watch_later,
             commands::mini_player,

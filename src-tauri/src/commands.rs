@@ -374,6 +374,56 @@ pub async fn mini_player(video_id: String) -> Result<()> {
 }
 
 #[tauri::command]
+pub async fn open_youtube_browser() -> Result<()> {
+    // open system browser to YouTube sign-in
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open").arg("https://www.youtube.com").spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd").args(["/C", "start", "https://www.youtube.com"]).spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg("https://www.youtube.com").spawn();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn import_subscriptions() -> Result<serde_json::Value> {
+    for browser in ["chrome", "firefox", "brave", "edge", "chromium", "opera"] {
+        let cookie_arg = format!("--cookies-from-browser={}", browser);
+        let out = tokio::process::Command::new("yt-dlp")
+            .args(["--dump-json", "--flat-playlist", &cookie_arg, "--playlist-end", "100", "https://www.youtube.com/feed/subscriptions"])
+            .arg("--js-runtimes").arg("node").arg("--no-warnings")
+            .output().await;
+        if let Ok(o) = out {
+            if o.status.success() {
+                let mut items = Vec::new();
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    let line = line.trim();
+                    if line.is_empty() { continue; }
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                        items.push(serde_json::json!({
+                            "id": v.get("id"),
+                            "title": v.get("title"),
+                            "thumbnail": v.get("thumbnail").or_else(|| v.get("thumbnails").and_then(|t| t.as_array()).and_then(|a| a.last()).and_then(|x| x.get("url"))),
+                            "channelId": v.get("channel_id").or_else(|| v.get("uploader_id")),
+                        }));
+                    }
+                }
+                if !items.is_empty() {
+                    return Ok(serde_json::json!({ "items": items, "nextPageToken": null, "browser": browser }));
+                }
+            }
+        }
+    }
+    Err(crate::error::AppError::Auth("Could not read YouTube cookies from any browser. Sign in to YouTube in Chrome/Firefox/Brave/Edge, then retry.".into()))
+}
+
+#[tauri::command]
 pub async fn check_mpv() -> Result<bool> {
     // check if mpv is on PATH
     let status = std::process::Command::new("mpv").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status();

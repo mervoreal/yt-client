@@ -192,15 +192,15 @@ export default function App() {
 
   async function loadSubs() {
     setView("subs");
-    setLoading(true);
-    setError(null);
     try {
-      const r: any = await invoke("get_subscriptions", { pageToken: null });
+      const r: any = await invoke("import_subscriptions");
       setSubs((r.items || []) as Sub[]);
     } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
+      // fall back to yt-dlp browser cookies path via get_subscriptions
+      try {
+        const r: any = await invoke("get_subscriptions", { pageToken: null });
+        setSubs((r.items || []) as Sub[]);
+      } catch (e2) { setError(String(e2)); }
     }
   }
 
@@ -430,8 +430,19 @@ export default function App() {
       {view === "subs" && (
         <div className="subs">
           <h2>Subscriptions</h2>
+          <div className="connectbox">
+            <p className="hint">Connect your YouTube account to see subscriptions. Sign in to YouTube in your browser, then import.</p>
+            <button onClick={() => invoke("open_youtube_browser").catch(() => {})}>1. Open YouTube in browser</button>
+            <button onClick={async () => {
+              setLoading(true); setError(null);
+              try {
+                const r: any = await invoke("import_subscriptions");
+                setSubs((r.items || []) as Sub[]);
+              } catch (e) { setError(String(e)); }
+              finally { setLoading(false); }
+            }}>2. Import subscriptions</button>
+          </div>
           <div className="sublist">
-            {subs.length === 0 && <p className="hint">No subscriptions found. Sign into YouTube in your browser (Chrome/Firefox) so yt-dlp can read your feed, then retry.</p>}
             {subs.map((s) => (
               <div key={s.id} className="subitem" onClick={() => s.channelId && openChannel(s.channelId)}>
                 {s.thumbnail && <Thumb url={s.thumbnail} alt="" />}

@@ -44,6 +44,8 @@ button {  }
 .playnative { padding: 8px 14px; border-radius: 20px; border: none; background: #ff0000; color: #fff; cursor: pointer; font-weight: 600; }
 .actionrow { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .actionrow button { padding: 6px 12px; border-radius: 18px; border: 1px solid #333; background: #272727; color: #fff; cursor: pointer; }
+.connectbox { padding: 16px; display: flex; flex-direction: column; gap: 8px; max-width: 480px; }
+.connectbox button { padding: 8px 14px; border-radius: 8px; border: 1px solid #333; background: #272727; color: #fff; cursor: pointer; text-align: left; }
 .stats { color: #aaa; font-size: 13px; margin: 4px 0 8px; }
 .watchbody { display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 0 16px 16px; }
 .comments h3, .related h3 { font-size: 15px; margin: 0 0 8px; }
